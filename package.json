@@ -4,11 +4,11 @@
   "version": "1.0.0",
   "description": "A game server manager",
   "main": "./src/index.js",
-  "type": "module",
   "scripts": {
-    "start": "node ./src/index.js"
+    "start": "node -r dotenv/config ./src/index.js"
   },
   "dependencies": {
+    "dotenv": "^16.5.0",
     "node-cron": "^3.0.3"
   }
 }

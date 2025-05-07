@@ -1,0 +1,6 @@
+{
+    "serverPort": 3000,
+    "minecraft": {
+        "cron": "50 11 * * *"
+    }
+}

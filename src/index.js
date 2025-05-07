@@ -1,11 +1,6 @@
-import cron from "node-cron"
-import rcon from "./handlers/rcon.js"
+const startCron = require('./cron.js');
+const startServer = require('./server.js');
+const jobs = require('./utils/getJobs.js')
 
-rcon("192.168.1.16", "43205", "password")
-    .then(async ({sendCommand}) => {
-        console.log(await sendCommand('stop'));
-    })
-    .catch(err => {
-        console.log(err)
-    })
-
+startCron(jobs);
+startServer(jobs);

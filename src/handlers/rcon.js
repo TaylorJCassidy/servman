@@ -1,5 +1,7 @@
-import net from "net";
+const net = require('net')
+const logger = require('../utils/logger.js')
 
+const log = logger('rcon');
 const SERVERDATA_RESPONSE_VALUE = 0;
 const SERVERDATA_EXECCOMMAND = 2;
 const SERVERDATA_AUTH_RESPONSE = 2;
@@ -7,51 +9,105 @@ const SERVERDATA_AUTH = 3;
 const UNKNOWN_REQUEST = 'Unknown request 0';
 const MAX_INT32 = 2147483647;
 
-export default async function(host, port, password) {
-    let socket;
+module.exports = function(host, port, password) {
+    const connection = rconConnection(host, port, password);
 
     const sendCommand = (body) => {
-        return new Promise((resolve, reject) => {
-            const id = Math.floor(Math.random() * MAX_INT32);
+        return new Promise(async (resolve, reject) => {
+            log(`Sending command ${body} to ${host}:${port}`)
+            connection.connect()
+                .then((socket) => {
+                    const id = Math.floor(Math.random() * MAX_INT32);
 
-            let response = '';
-            socket.on('data', (data) => {
-                const res = readResponse(data);
-                if (res.type == SERVERDATA_RESPONSE_VALUE && res.id == id) {
-                    if (res.body == UNKNOWN_REQUEST) resolve(response);
-                    else response += res.body;
-                }
-            })
+                    let response = '';
+                    const onData = (data) => {
+                        const res = readResponse(data);
+                        if (res.type == SERVERDATA_RESPONSE_VALUE && res.id == id) {
+                            if (res.body == UNKNOWN_REQUEST) {
+                                log(`Got response: ${response}`)
+                                socket.removeListener('data', onData);
+                                socket.removeListener('error', onData);
+                                resolve(response);
+                            }
+                            else response += res.body;
+                        }
+                    }
+                    socket.on('data', onData);
 
-            socket.once('error', reject);
-
-            socket.write(createRequest(SERVERDATA_EXECCOMMAND, id, body));
-            socket.write(createRequest(SERVERDATA_RESPONSE_VALUE, id, ''))
+                    const onErr = (err) => {
+                        log(`Failed to send command ${body} to ${host}:${port} with error: ${err}`, 'error')
+                        connection.disconnect();
+                        reject(err);
+                    }
+                    socket.once('error', onErr)
+        
+                    socket.write(createRequest(SERVERDATA_EXECCOMMAND, id, body));
+                    socket.write(createRequest(SERVERDATA_RESPONSE_VALUE, id, ''))
+                })
+                .catch(reject)
         })
     }
 
-    return new Promise((resolve, reject) => {
-        const id = Math.floor(Math.random() * MAX_INT32);
-        socket = net.createConnection(port, host, () => {
-            socket.write(createRequest(SERVERDATA_AUTH, id, password))
-        });
+    return {
+        sendCommand,
+        close: () => {connection.disconnect()}
+    };
+}
 
-        socket.once('data', (data) => {
-            const res = readResponse(data);
-            if (res.type != SERVERDATA_AUTH_RESPONSE) return reject(new Error('Bad response'));
-            if (res.id == -1) return reject(new Error('Auth failed'));
-            if (res.id == id) return resolve({sendCommand});
-            else reject(new Error("Unknown error"));
-        });
+function rconConnection(host, port, password) {
+    let socket;
+    let connected = false;
 
-        socket.once('error', (err) => {
-            reject(err)
-        });
-    })
-};
+    function connect() {
+        return new Promise((resolve, reject) => {
+            if (connected) return resolve(socket);
+            const id = Math.floor(Math.random() * MAX_INT32);
+            
+            socket = net.createConnection(port, host, () => {
+                log(`RCON connection opened with ${host}:${port}`)
+                socket.write(createRequest(SERVERDATA_AUTH, id, password))
+            });
+    
+            socket.once('data', (data) => {
+                const res = readResponse(data);
+                if (res.type == SERVERDATA_AUTH_RESPONSE && res.id == id) {
+                    log('Authenticated')
+                    connected = true;
+                    socket.removeListener('error', onErr);
+                    resolve(socket);
+                }
+                else {
+                    log('Failed authenticated', 'error')
+                    socket.destroy();
+                    reject(new Error('Auth failed'));
+                }
+            });
+
+            socket.once('close', () => {
+                socket = null;
+                connected = false;
+            })
+
+            const onErr = (err) => {
+                log(`Failed to open RCON connection with ${host}:${port} with error: ${err}`, 'error')
+                reject(err);
+            }
+    
+            socket.once('error', onErr);
+        })
+    }
+
+    function disconnect() {
+        socket.destroy();
+    }
+
+    return {
+        connect,
+        disconnect
+    }
+}
 
 function createRequest(type, id, body) {
-	// Size, in bytes, of the whole packet. 
 	const size = Buffer.byteLength(body) + 14;
 	const buffer = Buffer.alloc(size);
 
